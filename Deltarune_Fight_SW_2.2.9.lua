@@ -499,6 +499,96 @@ local function ForceTP(amount)
     end)
 end
 
+local LiveBattleCache = {
+    Battle = nil,
+    LastScan = 0,
+}
+
+local function FindLiveBattleController(force)
+    local now = os.clock()
+    if not force and LiveBattleCache.Battle ~= nil and (now - LiveBattleCache.LastScan) < 3 then
+        local cached = LiveBattleCache.Battle
+        if type(cached) == "table" and type(rawget(cached, "Roster")) == "table" then
+            return cached
+        end
+    end
+
+    local found = nil
+    pcall(function()
+        for _, v in pairs(getgc(true)) do
+            if type(v) == "table" then
+                local roster = rawget(v, "Roster")
+                local members = type(roster) == "table" and rawget(roster, "Members") or nil
+                if type(members) == "table" and #members > 0 then
+                    local battle = rawget(v, "Battle")
+                    local hasSoul = type(battle) == "table" and (rawget(battle, "Soul") ~= nil or type(rawget(battle, "Souls")) == "table")
+                    local hasTurn = type(rawget(v, "StartEnemyTurn")) == "function"
+                        or type(rawget(v, "EnterVictory")) == "function"
+                        or type(rawget(v, "RefreshUi")) == "function"
+                        or type(rawget(v, "BeginEnemyTurn")) == "function"
+                        or rawget(v, "State") ~= nil
+                        or hasSoul
+                    if hasTurn or hasSoul then
+                        found = v
+                        break
+                    end
+                end
+            end
+        end
+    end)
+
+    LiveBattleCache.Battle = found
+    LiveBattleCache.LastScan = now
+    return found
+end
+
+local function GetLiveSoul(battle)
+    if type(battle) ~= "table" then
+        return nil
+    end
+    local b = rawget(battle, "Battle")
+    if type(b) == "table" then
+        local soul = rawget(b, "Soul")
+        if type(soul) == "table" then
+            return soul
+        end
+        local souls = rawget(b, "Souls")
+        if type(souls) == "table" then
+            for _, s in pairs(souls) do
+                if type(s) == "table" and rawget(s, "Invuln") ~= nil then
+                    return s
+                end
+            end
+        end
+    end
+    local soul2 = rawget(battle, "Soul")
+    if type(soul2) == "table" then
+        return soul2
+    end
+    return nil
+end
+
+local function ForEachLiveSoul(battle, fn)
+    if type(battle) ~= "table" or type(fn) ~= "function" then
+        return
+    end
+    local b = rawget(battle, "Battle")
+    if type(b) == "table" then
+        local soul = rawget(b, "Soul")
+        if type(soul) == "table" then
+            fn(soul)
+        end
+        local souls = rawget(b, "Souls")
+        if type(souls) == "table" then
+            for _, s in pairs(souls) do
+                if type(s) == "table" then
+                    fn(s)
+                end
+            end
+        end
+    end
+end
+
 local function UnlockTPNow()
     local max = GetTensionMax()
     RescanCache("hard")
@@ -564,46 +654,47 @@ end
 
 local function ForcePartyHPFull()
     pcall(function()
-        local healed = 0
-        local battle = nil
-        if type(FindLiveBattleController) == "function" then
-            battle = FindLiveBattleController()
-        end
+        local battle = FindLiveBattleController(true)
         if type(battle) == "table" then
             local roster = rawget(battle, "Roster")
             local members = type(roster) == "table" and rawget(roster, "Members") or nil
             if type(members) == "table" then
                 for _, member in ipairs(members) do
-                    if type(member) == "table" and type(rawget(member, "MaxHP")) == "number" then
-                        local maxhp = rawget(member, "MaxHP")
-                        if maxhp > 0 then
+                    if type(member) == "table" then
+                        local maxhp = tonumber(rawget(member, "MaxHP"))
+                        if type(maxhp) == "number" and maxhp > 0 then
                             rawset(member, "HP", maxhp)
-                            if rawget(member, "Down") == true then
-                                rawset(member, "Down", false)
+                            rawset(member, "Down", false)
+                            rawset(member, "Swooned", false)
+                            if type(member.Heal) == "function" then
+                                pcall(function()
+                                    member:Heal(maxhp)
+                                end)
                             end
-                            if rawget(member, "Swooned") == true then
-                                rawset(member, "Swooned", false)
-                            end
-                            healed = healed + 1
                         end
                     end
                 end
             end
-        end
-        if #Cache.HPTables == 0 then
-            RescanCache("hard")
+            ForEachLiveSoul(battle, function(soul)
+                local maxhp = tonumber(rawget(soul, "MaxHP"))
+                if type(maxhp) == "number" and maxhp > 0 then
+                    rawset(soul, "HP", maxhp)
+                end
+            end)
+            if type(rawget(battle, "RefreshUi")) == "function" then
+                pcall(function()
+                    battle:RefreshUi()
+                end)
+            end
         end
         for _, v in pairs(Cache.HPTables) do
             local maxhp = rawget(v, "MaxHP")
             if type(maxhp) == "number" and maxhp > 0 then
                 rawset(v, "HP", maxhp)
-                if rawget(v, "Down") == true then
-                    rawset(v, "Down", false)
-                end
-                if rawget(v, "Swooned") == true then
+                rawset(v, "Down", false)
+                if rawget(v, "Swooned") ~= nil then
                     rawset(v, "Swooned", false)
                 end
-                healed = healed + 1
             end
         end
         for _, v in pairs(Cache.SoulTables) do
@@ -621,10 +712,7 @@ local function GivePartyHP(amount)
         return
     end
     pcall(function()
-        local battle = nil
-        if type(FindLiveBattleController) == "function" then
-            battle = FindLiveBattleController()
-        end
+        local battle = FindLiveBattleController(true)
         if type(battle) == "table" then
             local roster = rawget(battle, "Roster")
             local members = type(roster) == "table" and rawget(roster, "Members") or nil
@@ -632,18 +720,28 @@ local function GivePartyHP(amount)
                 for _, member in ipairs(members) do
                     if type(member) == "table" and type(rawget(member, "HP")) == "number" then
                         local maxhp = tonumber(rawget(member, "MaxHP")) or 9999
-                        local nhp = math.min((tonumber(rawget(member, "HP")) or 0) + amount, maxhp)
+                        local cur = tonumber(rawget(member, "HP")) or 0
+                        local nhp = math.min(cur + amount, maxhp)
+                        if amount < 0 then
+                            nhp = math.max(0, cur + amount)
+                        end
                         rawset(member, "HP", nhp)
                         if nhp > 0 then
-                            if rawget(member, "Down") == true then
-                                rawset(member, "Down", false)
-                            end
-                            if rawget(member, "Swooned") == true then
-                                rawset(member, "Swooned", false)
-                            end
+                            rawset(member, "Down", false)
+                            rawset(member, "Swooned", false)
+                        end
+                        if type(member.Heal) == "function" and amount > 0 then
+                            pcall(function()
+                                member:Heal(amount)
+                            end)
                         end
                     end
                 end
+            end
+            if type(rawget(battle, "RefreshUi")) == "function" then
+                pcall(function()
+                    battle:RefreshUi()
+                end)
             end
         end
         if #Cache.HPTables == 0 then
@@ -654,10 +752,8 @@ local function GivePartyHP(amount)
                 local nhp = math.min(v.HP + amount, v.MaxHP)
                 rawset(v, "HP", nhp)
                 if nhp > 0 then
-                    if rawget(v, "Down") == true then
-                        rawset(v, "Down", false)
-                    end
-                    if rawget(v, "Swooned") == true then
+                    rawset(v, "Down", false)
+                    if rawget(v, "Swooned") ~= nil then
                         rawset(v, "Swooned", false)
                     end
                 end
@@ -954,7 +1050,11 @@ local function PatchGodModeSoul(soul)
             rawset(soul, "_SWOriginalDamage", originalDamage)
             rawset(soul, "Damage", function(self, ...)
                 if PinksState.GodMode then
-                    rawset(self, "Invuln", 9999)
+                    rawset(self, "Invuln", 99999)
+                    local maxhp = rawget(self, "MaxHP")
+                    if type(maxhp) == "number" and maxhp > 0 then
+                        rawset(self, "HP", maxhp)
+                    end
                     return false
                 end
                 return originalDamage(self, ...)
@@ -963,10 +1063,67 @@ local function PatchGodModeSoul(soul)
         rawset(soul, "_SWGodModePatched", true)
     end
     if PinksState.GodMode then
-        rawset(soul, "Invuln", 9999)
+        rawset(soul, "Invuln", 99999)
         local maxhp = rawget(soul, "MaxHP")
         if type(maxhp) == "number" and maxhp > 0 then
             rawset(soul, "HP", maxhp)
+        end
+    else
+        if type(rawget(soul, "Invuln")) == "number" and rawget(soul, "Invuln") > 100 then
+            rawset(soul, "Invuln", -1)
+        end
+    end
+end
+
+local function PatchPartyMemberGodMode(member)
+    if type(member) ~= "table" then
+        return
+    end
+    if rawget(member, "_SWGodMemberPatched") ~= true then
+        local originalDamage = member.Damage
+        if type(originalDamage) == "function" then
+            rawset(member, "_SWOriginalMemberDamage", originalDamage)
+            rawset(member, "Damage", function(self, value, opts)
+                if PinksState.GodMode then
+                    local maxhp = tonumber(rawget(self, "MaxHP")) or 0
+                    if maxhp > 0 then
+                        rawset(self, "HP", maxhp)
+                    end
+                    rawset(self, "Down", false)
+                    rawset(self, "Swooned", false)
+                    return 0
+                end
+                return originalDamage(self, value, opts)
+            end)
+        end
+        rawset(member, "_SWGodMemberPatched", true)
+    end
+end
+
+local function ApplyGodModeLive()
+    local battle = FindLiveBattleController(false)
+    if type(battle) ~= "table" then
+        battle = FindLiveBattleController(true)
+    end
+    if type(battle) ~= "table" then
+        return
+    end
+    ForEachLiveSoul(battle, function(soul)
+        PatchGodModeSoul(soul)
+    end)
+    local roster = rawget(battle, "Roster")
+    local members = type(roster) == "table" and rawget(roster, "Members") or nil
+    if type(members) == "table" then
+        for _, member in ipairs(members) do
+            PatchPartyMemberGodMode(member)
+            if PinksState.GodMode and type(member) == "table" then
+                local maxhp = tonumber(rawget(member, "MaxHP"))
+                if type(maxhp) == "number" and maxhp > 0 then
+                    rawset(member, "HP", maxhp)
+                    rawset(member, "Down", false)
+                    rawset(member, "Swooned", false)
+                end
+            end
         end
     end
 end
@@ -1000,25 +1157,14 @@ end
 local function ApplyGodMode(on)
     PinksState.GodMode = on == true
     InstallGodModeSoulHooks()
-    if #Cache.SoulTables == 0 or #Cache.HPTables == 0 then
-        RescanCache("hard")
+    LiveBattleCache.Battle = nil
+    ApplyGodModeLive()
+    if on then
+        ForcePartyHPFull()
     end
     pcall(function()
         for _, v in pairs(Cache.SoulTables) do
             PatchGodModeSoul(v)
-            if on then
-                rawset(v, "Invuln", 9999)
-                if type(rawget(v, "MaxHP")) == "number" then
-                    rawset(v, "HP", v.MaxHP)
-                end
-            else
-                if type(rawget(v, "Invuln")) == "number" then
-                    rawset(v, "Invuln", -1)
-                end
-            end
-        end
-        if on then
-            ForcePartyHPFull()
         end
     end)
 end
@@ -2684,27 +2830,6 @@ local function AssignWeaponToActor(actorKey, weaponName)
     return changed > 0
 end
 
-local function FindLiveBattleController()
-    local found = nil
-    pcall(function()
-        for _, v in pairs(getgc(true)) do
-            if type(v) == "table" then
-                local roster = rawget(v, "Roster")
-                if type(roster) == "table" and type(rawget(roster, "Members")) == "table" then
-                    if type(rawget(v, "StartEnemyTurn")) == "function"
-                        or type(rawget(v, "EnterVictory")) == "function"
-                        or type(rawget(v, "BeginEnemyTurn")) == "function"
-                        or rawget(v, "State") ~= nil then
-                        found = v
-                        break
-                    end
-                end
-            end
-        end
-    end)
-    return found
-end
-
 local function ForceBattlePartyDefend(battle)
     if type(battle) ~= "table" then
         return false
@@ -3299,7 +3424,7 @@ RunService.Heartbeat:Connect(function(dt)
 
     if needTP or needHP or needGod or needClear or needFreeSoul or needVisual then
         GenericAccumulator += dt
-        local tickRate = needGod and 0.15 or ((needTP or needHP) and 0.5 or 0.75)
+        local tickRate = needGod and 0.05 or ((needTP or needHP) and 0.35 or 0.75)
         if GenericAccumulator >= tickRate then
             GenericAccumulator = 0
 
@@ -3316,13 +3441,7 @@ RunService.Heartbeat:Connect(function(dt)
                 end
 
                 if needGod then
-                    for _, v in ipairs(Cache.SoulTables) do
-                        rawset(v, "Invuln", 9999)
-                        if type(rawget(v, "MaxHP")) == "number" then
-                            rawset(v, "HP", v.MaxHP)
-                        end
-                    end
-                    ForcePartyHPFull()
+                    ApplyGodModeLive()
                 elseif needHP then
                     ForcePartyHPFull()
                 end
