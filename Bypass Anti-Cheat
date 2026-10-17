@@ -1,0 +1,59 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+
+local lastTargetModule = nil
+local lastPlayerDataModule = nil
+
+local function isEnvironmentReady()
+	local localPlayer = Players.LocalPlayer
+	if not localPlayer then return false end
+	if not localPlayer:FindFirstChild("PlayerGui") then return false end
+	return true
+end
+
+task.spawn(function()
+	while not isEnvironmentReady() do
+		task.wait(0.5)
+	end
+
+	while true do
+		local Core = ReplicatedStorage:FindFirstChild("Core")
+		if Core then
+			local System = Core:FindFirstChild("System")
+			if System then
+				local CheatCheck = System:FindFirstChild("CheatCheck")
+				if CheatCheck and CheatCheck:IsA("ModuleScript") then
+					if lastTargetModule ~= CheatCheck then
+						local success, TargetsTable = pcall(require, CheatCheck)
+						if success and type(TargetsTable) == "table" then
+							TargetsTable.Scan = function()
+								return {}
+							end
+							TargetsTable.Run = function()
+								return
+							end
+							lastTargetModule = CheatCheck
+						end
+					end
+				end
+
+				local PlayerData = System:FindFirstChild("PlayerData")
+				if PlayerData and PlayerData:IsA("ModuleScript") then
+					if lastPlayerDataModule ~= PlayerData then
+						local success, PlayerDataTable = pcall(require, PlayerData)
+						if success and type(PlayerDataTable) == "table" then
+							if PlayerDataTable.ReportCheat then
+								PlayerDataTable.ReportCheat = function(...)
+									return nil
+								end
+								lastPlayerDataModule = PlayerData
+							end
+						end
+					end
+				end
+			end
+		end
+		RunService.Heartbeat:Wait()
+	end
+end)
