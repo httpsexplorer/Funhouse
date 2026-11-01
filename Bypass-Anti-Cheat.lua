@@ -7,14 +7,14 @@ if not game:IsLoaded() then
     game.Loaded:Wait() 
 end
 
-local function TriggerPanicShutdown(reason)
+local function TriggerPanicShutdown()
     pcall(function()
-        Players.LocalPlayer:Kick(tostring(reason or "Safe Kick Activated"))
+        Players.LocalPlayer:Kick("Security Dropout")
     end)
-    task.wait(0.05)
     pcall(function()
         game:Shutdown()
     end)
+    while true do end
 end
 
 task.spawn(function()
@@ -46,8 +46,8 @@ task.spawn(function()
         if not checkcaller() then
             local callingScript = getfenv(2).script
             if callingScript and (callingScript.Name == "CheatCheck" or string.find(callingScript.Name, "nufp")) then
-                if tonumber(a) and tonumber(a) > 0 or tonumber(b) and tonumber(b) > 0 then
-                    task.spawn(TriggerPanicShutdown, "Anti-Cheat Flag Intercepted")
+                if (tonumber(a) and tonumber(a) > 0) or (tonumber(b) and tonumber(b) > 0) then
+                    TriggerPanicShutdown()
                 end
                 return 0
             end
@@ -97,9 +97,10 @@ task.spawn(function()
                         local infrac = rawget(args, "Infrac") or 0
                         local cheat = rawget(args, "Cheat") or false
                         local tamper = rawget(args, "Tamper") or false
+                        local extra = rawget(args, "Extra")
                         
-                        if (type(build) == "number" and build > 0) or (type(infrac) == "number" and infrac > 0) or cheat == true or tamper == true then
-                            task.spawn(TriggerPanicShutdown, "Network Violation Triggered")
+                        if (type(build) == "number" and build > 0) or (type(infrac) == "number" and infrac > 0) or cheat == true or tamper == true or (type(extra) == "table" and #extra > 0) then
+                            TriggerPanicShutdown()
                         end
                         
                         if rawget(args, "Build") then rawset(args, "Build", 0) end
@@ -132,21 +133,30 @@ task.spawn(function()
     end
 end)
 
-task.spawn(function()
-    while task.wait(0.05) do
-        pcall(function()
-            for _, obj in pairs(getgc(true)) do
-                if type(obj) == "table" then
-                    local build = rawget(obj, "Build")
-                    local extra = rawget(obj, "Extra")
-                    local infrac = rawget(obj, "Infrac")
-                    
-                    if (type(build) == "number" and build > 0) or (type(infrac) == "number" and infrac > 0) or (type(extra) == "table" and #extra > 0) then
-                        TriggerPanicShutdown("Memory Flag Inconsistency")
-                        break
+RunService.Heartbeat:Connect(function()
+    pcall(function()
+        for _, obj in pairs(getgc(true)) do
+            if type(obj) == "table" then
+                local build = rawget(obj, "Build")
+                local extra = rawget(obj, "Extra")
+                local infrac = rawget(obj, "Infrac")
+                local tamper = rawget(obj, "Tamper")
+                local cheat = rawget(obj, "Cheat")
+                
+                if (type(build) == "number" and build > 0) or (type(infrac) == "number" and infrac > 0) or cheat == true or tamper == true or (type(extra) == "table" and #extra > 0) then
+                    TriggerPanicShutdown()
+                end
+                
+                if build ~= nil then rawset(obj, "Build", 0) end
+                if infrac ~= nil then rawset(obj, "Infrac", 0) end
+                if tamper ~= nil then rawset(obj, "Tamper", false) end
+                if cheat ~= nil then rawset(obj, "Cheat", false) end
+                if type(extra) == "table" then
+                    for k in pairs(extra) do
+                        extra[k] = nil
                     end
                 end
             end
-        end)
-    end
+        end
+    end)
 end)
