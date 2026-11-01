@@ -1,141 +1,152 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ReplicatedFirst = game:GetService("ReplicatedFirst")
+local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
 
-local initialPlaceVersion = game.PlaceVersion
-
-local function scanSecurityAnomalies()
-    local success, CheatCheck = pcall(function()
-        return require(ReplicatedStorage:WaitForChild("Core", 2):WaitForChild("System", 2):WaitForChild("CheatCheck", 2))
-    end)
-    
-    if not success or type(CheatCheck) ~= "table" then
-        LocalPlayer:Kick("Security Module Corrupted Or Missing")
-        return false
-    end
-
-    local criticalMethods = { "Scan", "Runs", "Run", "Stamp" }
-    for _, method in pairs(criticalMethods) do
-        if type(CheatCheck[method]) ~= "function" then
-            LocalPlayer:Kick("Security System Layout Updated")
-            return false
-        end
-    end
-
-    if game.PlaceVersion ~= initialPlaceVersion then
-        LocalPlayer:Kick("Server Updated In Realtime")
-        return false
-    end
-
-    return true
+if not game:IsLoaded() then 
+    game.Loaded:Wait() 
 end
 
-local function cleanCheatCheck()
-    local success, CheatCheck = pcall(function()
-        return require(ReplicatedStorage:WaitForChild("Core", 2):WaitForChild("System", 2):WaitForChild("CheatCheck", 2))
+local function TriggerPanicShutdown(reason)
+    pcall(function()
+        Players.LocalPlayer:Kick(tostring(reason or "Safe Kick Activated"))
     end)
-    if success and type(CheatCheck) == "table" then
-        if CheatCheck.Scan ~= nil then
-            CheatCheck.Scan = function() return {} end
-        end
-        if CheatCheck.Runs ~= nil then
-            CheatCheck.Runs = function() return 0 end
-        end
-        if CheatCheck.Run ~= nil then
-            CheatCheck.Run = function() end
-        end
-        if CheatCheck.Stamp ~= nil then
-            CheatCheck.Stamp = function(p102)
-                if type(p102) == "table" then
-                    p102.Build = 0
-                    p102.Ext = ""
-                    p102.Extra = {}
-                    return p102
+    task.wait(0.05)
+    pcall(function()
+        game:Shutdown()
+    end)
+end
+
+task.spawn(function()
+    local rawDebugInfo = debug.info
+    local secureDebugInfo = function(f, mask, ...)
+        if not checkcaller() and mask == "s" and type(f) == "function" then
+            local src = rawDebugInfo(f, "s")
+            if src == nil or src == "" or string.find(src, "ThirdParty") or string.find(src, "Exploit") then
+                local CC = ReplicatedStorage:FindFirstChild("Core")
+                if CC then
+                    CC = CC:FindFirstChild("System")
+                    if CC then
+                        CC = CC:FindFirstChild("CheatCheck")
+                    end
                 end
-                return { Build = 0, Ext = "", Extra = {} }
+                if CC then
+                    return CC:GetFullName()
+                end
             end
         end
+        return rawDebugInfo(f, mask, ...)
     end
-end
+    rawset(debug, "info", (newcclosure and newcclosure(secureDebugInfo)) or secureDebugInfo)
+end)
 
-local function cleanInterfaceLoops()
-    local PlayerGui = LocalPlayer:FindFirstChild("PlayerGui")
-    if PlayerGui then
-        for _, gui in pairs(PlayerGui:GetChildren()) do
-            if gui:IsA("ScreenGui") and #gui.Name == 8 then
-                for _, obj in pairs(gui:GetChildren()) do
-                    if obj:IsA("LocalScript") and #obj.Name == 8 then
-                        obj.Disabled = true
+task.spawn(function()
+    local rawBor = bit32.bor
+    local secureBor = function(a, b, ...)
+        if not checkcaller() then
+            local callingScript = getfenv(2).script
+            if callingScript and (callingScript.Name == "CheatCheck" or string.find(callingScript.Name, "nufp")) then
+                if tonumber(a) and tonumber(a) > 0 or tonumber(b) and tonumber(b) > 0 then
+                    task.spawn(TriggerPanicShutdown, "Anti-Cheat Flag Intercepted")
+                end
+                return 0
+            end
+        end
+        return rawBor(a, b, ...)
+    end
+    rawset(bit32, "bor", (newcclosure and newcclosure(secureBor)) or secureBor)
+end)
+
+task.spawn(function()
+    local gameMeta = getrawmetatable(game)
+    if gameMeta then
+        local rawIndex = gameMeta.__index
+        local rawNamecall = gameMeta.__namecall
+        
+        setreadonly(gameMeta, false)
+        
+        gameMeta.__index = newcclosure(function(self, key)
+            if not checkcaller() and type(self) == "Instance" and self:IsA("ValueBase") then
+                if self:HasTag("StatValue") or string.find(self.Name, "HP") or string.find(self.Name, "MaxHP") then
+                    local originalTable = ReplicatedStorage:FindFirstChild("Core")
+                    if originalTable then
+                        originalTable = originalTable:FindFirstChild("Data")
+                        if originalTable then
+                            local ok, Party = pcall(require, originalTable.Party)
+                            if ok and Party and type(Party.Set) == "function" then
+                                local baseData = Party.Set(1)
+                                if baseData and baseData.Templates and baseData.Templates[self.Parent.Name] then
+                                    return baseData.Templates[self.Parent.Name][self.Name] or rawIndex(self, key)
+                                end
+                            end
+                        end
                     end
                 end
             end
-        end
-    end
-end
-
-local function cleanNetworkPackets()
-    local success, oldNamecall
-    success, oldNamecall = pcall(function()
-        return hookmetamethod(game, "__namecall", function(self, ...)
+            return rawIndex(self, key)
+        end)
+        
+        gameMeta.__namecall = newcclosure(function(self, ...)
             local method = getnamecallmethod()
-            local args = {...}
-            if method == "FireServer" and #args >= 2 and type(args) == "string" and type(args) == "string" then
-                if #args == 8 and #args == 8 then
-                    args = "110"
-                    return oldNamecall(self, table.unpack(args))
-                end
-            end
-            if self.Name == "DeltaAward" and method == "FireServer" and type(args) == "table" then
-                local packet = args
-                if packet.Build or packet.Lost then
-                    packet.Build = 0
-                    packet.Hits = 0
-                    packet.DamageTaken = 0
-                    packet.Downs = 0
-                    packet.Lost = nil
-                end
-                return oldNamecall(self, packet)
-            end
-            return oldNamecall(self, ...)
-        end)
-    end)
-end
-
-local function cleanDebugEnvironment()
-    if debug and debug.info then
-        pcall(function()
-            local originalDebugInfo = debug.info
-            hookfunction(debug.info, function(func, layer)
-                if not checkcaller() then
-                    local success, result = pcall(originalDebugInfo, func, layer)
-                    if success and type(result) == "string" and not result:find("Shared") and not result:find("Client") then
-                        local battleClient = game:GetService("StarterPlayer"):FindFirstChild("StarterPlayerScripts")
-                        if battleClient then
-                            battleClient = battleClient:FindFirstChild("BattleClient")
+            if not checkcaller() and (method == "FireServer" or method == "InvokeServer") then
+                local remoteName = tostring(self.Name)
+                if remoteName == "b5e021a1" or string.find(remoteName, "Win") or string.find(remoteName, "Sync") or string.find(remoteName, "DataRemote") or string.find(remoteName, "PartyRemote") then
+                    local args = {...}
+                    if type(args) == "table" then
+                        local build = rawget(args, "Build") or 0
+                        local infrac = rawget(args, "Infrac") or 0
+                        local cheat = rawget(args, "Cheat") or false
+                        local tamper = rawget(args, "Tamper") or false
+                        
+                        if (type(build) == "number" and build > 0) or (type(infrac) == "number" and infrac > 0) or cheat == true or tamper == true then
+                            task.spawn(TriggerPanicShutdown, "Network Violation Triggered")
                         end
-                        if battleClient then
-                            return battleClient:GetFullName()
+                        
+                        if rawget(args, "Build") then rawset(args, "Build", 0) end
+                        if rawget(args, "Extra") then rawset(args, "Extra", {}) end
+                        if rawget(args, "Infrac") then rawset(args, "Infrac", 0) end
+                        if rawget(args, "Cheat") then rawset(args, "Cheat", false) end
+                        if rawget(args, "Tamper") then rawset(args, "Tamper", false) end
+                        if rawget(args, "Validation") then rawset(args, "Validation", true) end
+                    end
+                    if remoteName == "b5e021a1" then
+                        local fakePass, fakeData = pcall(function()
+                            return {
+                                ["Build"] = 0,
+                                ["Extra"] = {},
+                                ["Status"] = "Clean",
+                                ["Integrity"] = true
+                            }
+                        end)
+                        if fakePass then
+                            return rawNamecall(self, fakeData)
                         end
                     end
+                    return rawNamecall(self, table.unpack(args))
                 end
-                return originalDebugInfo(func, layer)
-            end)
+            end
+            return rawNamecall(self, ...)
+        end)
+        
+        setreadonly(gameMeta, true)
+    end
+end)
+
+task.spawn(function()
+    while task.wait(0.05) do
+        pcall(function()
+            for _, obj in pairs(getgc(true)) do
+                if type(obj) == "table" then
+                    local build = rawget(obj, "Build")
+                    local extra = rawget(obj, "Extra")
+                    local infrac = rawget(obj, "Infrac")
+                    
+                    if (type(build) == "number" and build > 0) or (type(infrac) == "number" and infrac > 0) or (type(extra) == "table" and #extra > 0) then
+                        TriggerPanicShutdown("Memory Flag Inconsistency")
+                        break
+                    end
+                end
+            end
         end)
     end
-end
-
-if scanSecurityAnomalies() then
-    pcall(cleanNetworkPackets)
-    pcall(cleanDebugEnvironment)
-
-    task.spawn(function()
-        while task.wait(1) do
-            if scanSecurityAnomalies() then
-                pcall(cleanCheatCheck)
-                pcall(cleanInterfaceLoops)
-            else
-                break
-            end
-        end
-    end)
-end
+end)
