@@ -1,162 +1,143 @@
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local ReplicatedFirst = game:GetService("ReplicatedFirst")
-local RunService = game:GetService("RunService")
-local Players = game:GetService("Players")
+local RS = game:GetService("ReplicatedStorage")
 
-if not game:IsLoaded() then 
-    game.Loaded:Wait() 
+if not game:IsLoaded() then game.Loaded:Wait() end
+
+local function deepClean(t, depth)
+    if type(t) ~= "table" or (depth or 0) > 3 then return end
+    rawset(t, "Build", 0)
+    rawset(t, "Infrac", 0)
+    rawset(t, "Tamper", false)
+    rawset(t, "Cheat", false)
+    rawset(t, "TamperDetected", false)
+    rawset(t, "CheatCheckResult", true)
+    rawset(t, "Validation", true)
+    if rawget(t, "Ext") == nil then rawset(t, "Ext", "") end
+    local e = rawget(t, "Extra")
+    if type(e) == "table" then
+        for k in pairs(e) do e[k] = nil end
+    else
+        rawset(t, "Extra", {})
+    end
+    for _, v in pairs(t) do
+        if type(v) == "table" then
+            deepClean(v, (depth or 0) + 1)
+        end
+    end
 end
 
-local function TriggerPanicShutdown()
-    pcall(function()
-        Players.LocalPlayer:Kick("Security Dropout")
+pcall(function()
+    if type(bit32) ~= "table" then return end
+    if setreadonly then pcall(setreadonly, bit32, false) end
+    if make_writeable then pcall(make_writeable, bit32) end
+    local oldBor = bit32.bor
+    local function silentBor(a, b, ...)
+        if type(a) == "number" and type(b) == "number" and b > 0 and b <= 65536 and a >= 0 and a < 65536 then
+            if b == 1 or b == 2 or b == 4 or b == 8 or b == 16 or b == 32 or b == 64 or b == 128
+                or b == 256 or b == 512 or b == 1024 or b == 2048 or b == 4096 or b == 8192
+                or b == 16384 or b == 32768 then
+                return a
+            end
+        end
+        return oldBor(a, b, ...)
+    end
+    if type(hookfunction) == "function" then
+        pcall(hookfunction, oldBor, newcclosure(silentBor))
+    end
+    bit32.bor = newcclosure(silentBor)
+end)
+
+local Core = RS:FindFirstChild("Core")
+local System = Core and Core:FindFirstChild("System")
+local CheatCheckMod = System and System:FindFirstChild("CheatCheck")
+if CheatCheckMod then
+    local ok, proxy = pcall(require, CheatCheckMod)
+    if ok and type(proxy) == "table" then
+        local mt = getmetatable(proxy)
+        local config = type(mt) == "table" and rawget(mt, "__index")
+        if type(config) ~= "table" then
+            pcall(function()
+                for _, obj in getgc(false) do
+                    if type(obj) == "table" and (rawget(obj, "Prefix") == "_SW"
+                        or (type(rawget(obj, "Scan")) == "function" and type(rawget(obj, "Stamp")) == "function")) then
+                        config = obj
+                        break
+                    end
+                end
+            end)
+        end
+        if type(config) == "table" then
+            local function sr(t, k, v) pcall(rawset, t, k, v) end
+            sr(config, "Scan", function() return {} end)
+            sr(config, "Run", function() end)
+            sr(config, "ProbeScan", function() end)
+            sr(config, "RunExtension", function() end)
+            sr(config, "Flag", function() end)
+            sr(config, "Stamp", function(s)
+                if type(s) ~= "table" then s = {} end
+                s.Build = 0
+                s.Ext = ""
+                s.Extra = {}
+                return s
+            end)
+            sr(config, "Decode", function() return {} end)
+            sr(config, "Runs", function() return 0 end)
+            if type(rawget(config, "Foreign")) == "function" then
+                sr(config, "Foreign", function() return false end)
+            end
+            if type(rawget(config, "Planted")) == "function" then
+                sr(config, "Planted", function() return false end)
+            end
+        end
+    end
+end
+
+local gameMt = getrawmetatable(game)
+if gameMt then
+    local old = gameMt.__namecall
+    setreadonly(gameMt, false)
+    gameMt.__namecall = newcclosure(function(self, ...)
+        local method = getnamecallmethod()
+        if not checkcaller() and (method == "FireServer" or method == "InvokeServer") then
+            local name = tostring(self.Name or "")
+            local isHex = #name == 8 and name:match("^%x+$") ~= nil
+            if isHex or name == "DeltaAward" or name == "PartyRemote" or name == "DataRemote" or name == "NetRelay" then
+                local args = {...}
+
+                if isHex and #args >= 4 and tostring(args[3]) == "111" then
+                    local st = tostring(args[4])
+                    if st ~= "00" and st ~= "0" then
+                        return
+                    end
+                    args[4] = "00"
+                    return old(self, table.unpack(args))
+                end
+
+                if name == "DeltaAward" or name == "PartyRemote" or name == "DataRemote" then
+                    for i = 1, #args do
+                        if type(args[i]) == "table" then
+                            deepClean(args[i])
+                        end
+                    end
+                    return old(self, table.unpack(args))
+                end
+            end
+        end
+        return old(self, ...)
     end)
-    pcall(function()
-        game:Shutdown()
-    end)
-    while true do end
+    setreadonly(gameMt, true)
 end
 
 task.spawn(function()
-    local rawDebugInfo = debug.info
-    local secureDebugInfo = function(f, mask, ...)
-        if not checkcaller() and mask == "s" and type(f) == "function" then
-            local src = rawDebugInfo(f, "s")
-            if src == nil or src == "" or string.find(src, "ThirdParty") or string.find(src, "Exploit") then
-                local CC = ReplicatedStorage:FindFirstChild("Core")
-                if CC then
-                    CC = CC:FindFirstChild("System")
-                    if CC then
-                        CC = CC:FindFirstChild("CheatCheck")
-                    end
-                end
-                if CC then
-                    return CC:GetFullName()
+    while task.wait(7) do
+        pcall(function()
+            local n = 0
+            for _, obj in getgc(false) do
+                n = n + 1
+                if n > 5000 then break end
+                if type(obj) == "table" and rawget(obj, "Build") ~= nil then
+                    deepClean(obj)
                 end
             end
-        end
-        return rawDebugInfo(f, mask, ...)
-    end
-    rawset(debug, "info", (newcclosure and newcclosure(secureDebugInfo)) or secureDebugInfo)
-end)
-
-task.spawn(function()
-    local rawBor = bit32.bor
-    local secureBor = function(a, b, ...)
-        if not checkcaller() then
-            local callingScript = getfenv(2).script
-            if callingScript and (callingScript.Name == "CheatCheck" or string.find(callingScript.Name, "nufp")) then
-                if (tonumber(a) and tonumber(a) > 0) or (tonumber(b) and tonumber(b) > 0) then
-                    TriggerPanicShutdown()
-                end
-                return 0
-            end
-        end
-        return rawBor(a, b, ...)
-    end
-    rawset(bit32, "bor", (newcclosure and newcclosure(secureBor)) or secureBor)
-end)
-
-task.spawn(function()
-    local gameMeta = getrawmetatable(game)
-    if gameMeta then
-        local rawIndex = gameMeta.__index
-        local rawNamecall = gameMeta.__namecall
-        
-        setreadonly(gameMeta, false)
-        
-        gameMeta.__index = newcclosure(function(self, key)
-            if not checkcaller() and type(self) == "Instance" and self:IsA("ValueBase") then
-                if self:HasTag("StatValue") or string.find(self.Name, "HP") or string.find(self.Name, "MaxHP") then
-                    local originalTable = ReplicatedStorage:FindFirstChild("Core")
-                    if originalTable then
-                        originalTable = originalTable:FindFirstChild("Data")
-                        if originalTable then
-                            local ok, Party = pcall(require, originalTable.Party)
-                            if ok and Party and type(Party.Set) == "function" then
-                                local baseData = Party.Set(1)
-                                if baseData and baseData.Templates and baseData.Templates[self.Parent.Name] then
-                                    return baseData.Templates[self.Parent.Name][self.Name] or rawIndex(self, key)
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-            return rawIndex(self, key)
         end)
-        
-        gameMeta.__namecall = newcclosure(function(self, ...)
-            local method = getnamecallmethod()
-            if not checkcaller() and (method == "FireServer" or method == "InvokeServer") then
-                local remoteName = tostring(self.Name)
-                if remoteName == "b5e021a1" or string.find(remoteName, "Win") or string.find(remoteName, "Sync") or string.find(remoteName, "DataRemote") or string.find(remoteName, "PartyRemote") then
-                    local args = {...}
-                    if type(args) == "table" then
-                        local build = rawget(args, "Build") or 0
-                        local infrac = rawget(args, "Infrac") or 0
-                        local cheat = rawget(args, "Cheat") or false
-                        local tamper = rawget(args, "Tamper") or false
-                        local extra = rawget(args, "Extra")
-                        
-                        if (type(build) == "number" and build > 0) or (type(infrac) == "number" and infrac > 0) or cheat == true or tamper == true or (type(extra) == "table" and #extra > 0) then
-                            TriggerPanicShutdown()
-                        end
-                        
-                        if rawget(args, "Build") then rawset(args, "Build", 0) end
-                        if rawget(args, "Extra") then rawset(args, "Extra", {}) end
-                        if rawget(args, "Infrac") then rawset(args, "Infrac", 0) end
-                        if rawget(args, "Cheat") then rawset(args, "Cheat", false) end
-                        if rawget(args, "Tamper") then rawset(args, "Tamper", false) end
-                        if rawget(args, "Validation") then rawset(args, "Validation", true) end
-                    end
-                    if remoteName == "b5e021a1" then
-                        local fakePass, fakeData = pcall(function()
-                            return {
-                                ["Build"] = 0,
-                                ["Extra"] = {},
-                                ["Status"] = "Clean",
-                                ["Integrity"] = true
-                            }
-                        end)
-                        if fakePass then
-                            return rawNamecall(self, fakeData)
-                        end
-                    end
-                    return rawNamecall(self, table.unpack(args))
-                end
-            end
-            return rawNamecall(self, ...)
-        end)
-        
-        setreadonly(gameMeta, true)
     end
-end)
-
-RunService.Heartbeat:Connect(function()
-    pcall(function()
-        for _, obj in pairs(getgc(true)) do
-            if type(obj) == "table" then
-                local build = rawget(obj, "Build")
-                local extra = rawget(obj, "Extra")
-                local infrac = rawget(obj, "Infrac")
-                local tamper = rawget(obj, "Tamper")
-                local cheat = rawget(obj, "Cheat")
-                
-                if (type(build) == "number" and build > 0) or (type(infrac) == "number" and infrac > 0) or cheat == true or tamper == true or (type(extra) == "table" and #extra > 0) then
-                    TriggerPanicShutdown()
-                end
-                
-                if build ~= nil then rawset(obj, "Build", 0) end
-                if infrac ~= nil then rawset(obj, "Infrac", 0) end
-                if tamper ~= nil then rawset(obj, "Tamper", false) end
-                if cheat ~= nil then rawset(obj, "Cheat", false) end
-                if type(extra) == "table" then
-                    for k in pairs(extra) do
-                        extra[k] = nil
-                    end
-                end
-            end
-        end
-    end)
 end)
